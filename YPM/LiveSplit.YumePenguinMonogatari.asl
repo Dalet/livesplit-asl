@@ -7,7 +7,7 @@ state("fceux")
 	byte lastBossHealth : 0x2E4518, 0x687;
 }
 
-init
+startup
 {
 	vars.currentLevel = 0;
 	vars.reqHealthToContinue = new byte[]
