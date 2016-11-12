@@ -1,5 +1,5 @@
 /*
-	v1.0
+	v1.0.1
 */
 
 state("Fallout4") { }
@@ -8,12 +8,31 @@ startup
 {
 	vars.watchers = new MemoryWatcherList();
 
-	vars.ReadOffset = (Func<Process, IntPtr, IntPtr>)((proc, ptr) =>
+	// ptr: address of the offset (not the start of the instruction!)
+	// offsetSize: the number of bytes of the offset
+	// remainingBytes: the number of bytes until the end of the instruction (not including the offset bytes)
+	vars.ReadOffset = (Func<Process, IntPtr, int, int, IntPtr>)((proc, ptr, offsetSize, remainingBytes) =>
 	{
-		int offset;
-		if (ptr == IntPtr.Zero || !proc.ReadValue<int>(ptr, out offset))
+		byte[] offsetBytes;
+		if (ptr == IntPtr.Zero || !proc.ReadBytes(ptr, offsetSize, out offsetBytes))
 			return IntPtr.Zero;
-		return ptr + 5 + offset;
+
+		int offset;
+		switch (offsetSize)
+		{
+			case 1:
+				offset = offsetBytes[0];
+				break;
+			case 2:
+				offset = BitConverter.ToInt16(offsetBytes, 0);
+				break;
+			case 4:
+				offset = BitConverter.ToInt32(offsetBytes, 0);
+				break;
+			default:
+				throw new Exception("Unsupported offset size");
+		}
+		return ptr + offsetSize + remainingBytes + offset;
 	});
 
 	vars.loadScreenTarget = new SigScanTarget(0,
@@ -52,7 +71,7 @@ startup
 		"48 8B 0D ?? ?? ?? ??",		// mov rcx,[Fallout4.exe+7043718]
 		"3B D0",					// cmp edx,eax
 		"F3 0F 11 3D ?? ?? ?? ??",	// movss [Fallout4.exe+7043294],xmm7
-		"F3 0F 11 05 ?? ?? ?? ??",	// movss [Fallout4.exe+7043298],xmm0  ; isWaiting-2
+		"F3 0F 11 05 ?? ?? ?? ??",	// movss [Fallout4.exe+7043298],xmm0  ; isWaiting-3
 		"0F 43 D6"					// cmovae edx,esi
 		);
 }
@@ -62,16 +81,16 @@ init
 	var module = modules.First();
 	var scanner = new SignatureScanner(game, module.BaseAddress, module.ModuleMemorySize);
 
-	var isQuickloadingAddr = vars.ReadOffset(game, scanner.Scan(vars.quickloadingTarget));
-	var isWaitingAddr = vars.ReadOffset(game, scanner.Scan(vars.waitingTarget)) + 2;
+	var isQuickloadingAddr = vars.ReadOffset(game, scanner.Scan(vars.quickloadingTarget), 4, 1);
+	var isWaitingAddr = vars.ReadOffset(game, scanner.Scan(vars.waitingTarget), 4, 0) + 3;
 
 	var loadScreenTargetAddr = scanner.Scan(vars.loadScreenTarget);
 	var isCellTransitionAddr = IntPtr.Zero;
 	var isLoadingScreenAddr = IntPtr.Zero;
 	if (loadScreenTargetAddr != IntPtr.Zero)
 	{
-		isCellTransitionAddr = vars.ReadOffset(game, loadScreenTargetAddr + 2);
-		isLoadingScreenAddr = vars.ReadOffset(game, loadScreenTargetAddr + 73);
+		isCellTransitionAddr = vars.ReadOffset(game, loadScreenTargetAddr + 2, 4, 1);
+		isLoadingScreenAddr = vars.ReadOffset(game, loadScreenTargetAddr + 73, 4, 1);
 	}
 
 	print("[NoLoads] isLoadingScreen: " + isLoadingScreenAddr.ToString("X") + "\n"
